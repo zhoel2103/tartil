@@ -1,0 +1,22 @@
+{
+  "name": "Tartil Qur'an",
+  "short_name": "Tartil",
+  "description": "Baca AlQuran digital dengan terjemahan, audio berkualitas, dan tafsir lengkap.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#022c22",
+  "theme_color": "#022c22",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/icon.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}
