@@ -1,6 +1,7 @@
 import { getSuratList } from "@/services/api";
 import Link from "next/link";
 import VectorSearch from "@/components/VectorSearch";
+import HomeBookmarkBar from "@/components/HomeBookmarkBar";
 
 export default async function Home() {
   const surats = await getSuratList();
@@ -16,6 +17,9 @@ export default async function Home() {
         </p>
         <VectorSearch />
       </div>
+
+      {/* Riwayat Terakhir Dibaca & Quick Access Bookmark */}
+      <HomeBookmarkBar />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {surats.map((surat) => (

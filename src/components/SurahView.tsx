@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { SuratDetail, SuratTafsir } from "@/services/api";
 import AyatCard from "@/components/AyatCard";
 import SurahPlayer from "@/components/SurahPlayer";
+import { useBookmark } from "@/context/BookmarkContext";
 
 interface SurahViewProps {
   surat: SuratDetail;
@@ -17,6 +18,8 @@ export default function SurahView({ surat, tafsirData, nomor }: SurahViewProps) 
   const [isHafalanMode, setIsHafalanMode] = useState(false);
   // Map of ayat numbers that have been successfully unlocked via voice or manually
   const [unlockedAyatMap, setUnlockedAyatMap] = useState<Record<number, boolean>>({});
+
+  const { bookmarks, setIsDrawerOpen } = useBookmark();
 
   const handleUnlockAyat = (ayatNomor: number) => {
     setUnlockedAyatMap((prev) => ({
@@ -47,14 +50,33 @@ export default function SurahView({ surat, tafsirData, nomor }: SurahViewProps) 
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-8 md:py-12">
-      {/* Header Navigation & Mode Hafalan Toggle Bar */}
+      {/* Header Navigation, Bookmark Button & Mode Hafalan Toggle */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <Link
-          href="/"
-          className="text-emerald-600 dark:text-emerald-400 hover:underline font-medium inline-flex items-center gap-1.5 text-sm sm:text-base"
-        >
-          <span>&larr;</span> Kembali ke Daftar Surat
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="text-emerald-600 dark:text-emerald-400 hover:underline font-medium inline-flex items-center gap-1.5 text-sm sm:text-base"
+          >
+            <span>&larr;</span> Kembali
+          </Link>
+
+          {/* Tombol Buka Bookmark Drawer */}
+          <button
+            onClick={() => setIsDrawerOpen(true)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-100/60 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80 text-emerald-900 dark:text-emerald-100 hover:bg-amber-50 dark:hover:bg-amber-900/30 text-xs sm:text-sm font-medium transition-colors shadow-sm"
+            title="Buka daftar bookmark & riwayat membaca"
+          >
+            <svg className="w-3.5 h-3.5 fill-amber-500 text-amber-500" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+            <span>Bookmark</span>
+            {bookmarks.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                {bookmarks.length}
+              </span>
+            )}
+          </button>
+        </div>
 
         {/* Toggle Mode Hafalan */}
         <div className="flex items-center gap-3 bg-emerald-100/60 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80 p-1.5 sm:p-2 rounded-2xl shadow-sm">
@@ -188,6 +210,9 @@ export default function SurahView({ surat, tafsirData, nomor }: SurahViewProps) 
             <AyatCard
               key={ayat.nomorAyat}
               ayat={ayat}
+              suratNomor={surat.nomor}
+              suratNama={surat.nama}
+              suratNamaLatin={surat.namaLatin}
               tafsirHtml={tafsirAyat?.teks}
               isHafalanMode={isHafalanMode}
               isUnlocked={Boolean(unlockedAyatMap[ayat.nomorAyat])}

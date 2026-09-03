@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Amiri } from "next/font/google";
 import "./globals.css";
+import { BookmarkProvider } from "@/context/BookmarkContext";
+import BookmarkDrawer from "@/components/BookmarkDrawer";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -35,8 +37,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id">
-      <body className={`${inter.variable} ${amiri.variable} font-sans antialiased bg-gradient-to-br from-emerald-50 to-teal-100 min-h-screen text-emerald-950 dark:from-teal-950 dark:to-emerald-900 dark:text-emerald-50`}>
-        {children}
+      <body
+        className={`${inter.variable} ${amiri.variable} font-sans antialiased bg-gradient-to-br from-emerald-50 to-teal-100 min-h-screen text-emerald-950 dark:from-teal-950 dark:to-emerald-900 dark:text-emerald-50`}
+      >
+        <BookmarkProvider>
+          {children}
+          <BookmarkDrawer />
+        </BookmarkProvider>
       </body>
     </html>
   );

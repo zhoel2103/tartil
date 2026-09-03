@@ -3,11 +3,15 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { Ayat } from "@/services/api";
 import { useAudio } from "@/context/AudioContext";
+import { useBookmark } from "@/context/BookmarkContext";
 import { compareRecitation } from "@/utils/arabicMatcher";
 import { playSuccessSound, playErrorSound } from "@/utils/audioFeedback";
 
 export interface AyatCardProps {
   ayat: Ayat;
+  suratNomor?: number;
+  suratNama?: string;
+  suratNamaLatin?: string;
   tafsirHtml?: string;
   isHafalanMode?: boolean;
   isUnlocked?: boolean;
@@ -16,6 +20,9 @@ export interface AyatCardProps {
 
 export default function AyatCard({
   ayat,
+  suratNomor = 1,
+  suratNama = "",
+  suratNamaLatin = "",
   tafsirHtml,
   isHafalanMode = false,
   isUnlocked = false,
@@ -26,6 +33,7 @@ export default function AyatCard({
 
   const [progress, setProgress] = useState(0);
   const { activeAyatNomor, setActiveAyatNomor, isPlayingGlobal, playNextAyat } = useAudio();
+  const { isBookmarked, toggleBookmark, setAsLastRead } = useBookmark();
 
   // Voice recognition states
   const [isListening, setIsListening] = useState(false);
@@ -36,9 +44,12 @@ export default function AyatCard({
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isRevealedManually, setIsRevealedManually] = useState(false);
+  const [showBookmarkToast, setShowBookmarkToast] = useState(false);
+  const [bookmarkToastMessage, setBookmarkToastMessage] = useState("");
 
   const isActive = activeAyatNomor === ayat.nomorAyat;
   const isHidden = isHafalanMode && !isUnlocked && !isRevealedManually;
+  const bookmarked = isBookmarked(suratNomor, ayat.nomorAyat);
 
   useEffect(() => {
     if (isActive && isPlayingGlobal) {
@@ -86,6 +97,46 @@ export default function AyatCard({
 
   const handlePlay = () => {
     setActiveAyatNomor(ayat.nomorAyat);
+    // Automatically record reading history
+    setAsLastRead({
+      suratNomor,
+      suratNama,
+      suratNamaLatin,
+      ayatNomor: ayat.nomorAyat,
+      teksArab: ayat.teksArab,
+      teksIndonesia: ayat.teksIndonesia,
+    });
+  };
+
+  const handleBookmarkToggle = () => {
+    const isNowBookmarked = toggleBookmark({
+      suratNomor,
+      suratNama,
+      suratNamaLatin,
+      ayatNomor: ayat.nomorAyat,
+      teksArab: ayat.teksArab,
+      teksIndonesia: ayat.teksIndonesia,
+    });
+
+    // Also mark as last read when bookmarking
+    if (isNowBookmarked) {
+      setAsLastRead({
+        suratNomor,
+        suratNama,
+        suratNamaLatin,
+        ayatNomor: ayat.nomorAyat,
+        teksArab: ayat.teksArab,
+        teksIndonesia: ayat.teksIndonesia,
+      });
+      setBookmarkToastMessage("Ayat berhasil disimpan ke bookmark ✨");
+    } else {
+      setBookmarkToastMessage("Ayat dihapus dari bookmark");
+    }
+
+    setShowBookmarkToast(true);
+    setTimeout(() => {
+      setShowBookmarkToast(false);
+    }, 2200);
   };
 
   // Start Voice Recognition (Lafazkan)
@@ -107,7 +158,6 @@ export default function AyatCard({
     }
 
     try {
-      // If already running, abort first
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -137,7 +187,6 @@ export default function AyatCard({
         let bestResult: any = null;
         let highestScore = -1;
 
-        // Check alternatives from speech recognition
         for (let i = 0; i < results.length; i++) {
           const spoken = results[i].transcript;
           const evaluated = compareRecitation(spoken, ayat.teksArab, ayat.teksLatin);
@@ -223,10 +272,20 @@ export default function AyatCard({
           : "border-emerald-100 dark:border-emerald-800/50 hover:border-amber-500/30"
       }`}
     >
-      {/* Top Header: Nomor Ayat & Status Badges */}
+      {/* Toast Bookmark Notification */}
+      {showBookmarkToast && (
+        <div className="absolute top-4 right-4 z-20 px-3.5 py-2 rounded-xl bg-slate-900/90 text-white text-xs font-medium shadow-lg backdrop-blur-sm border border-white/10 animate-fade-in flex items-center gap-2">
+          <svg className="w-3.5 h-3.5 text-amber-400 fill-amber-400" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+          </svg>
+          <span>{bookmarkToastMessage}</span>
+        </div>
+      )}
+
+      {/* Top Header: Nomor Ayat, Status Badges, & Actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
-          {/* Badge Nomor */}
+          {/* Badge Nomor Ayat */}
           <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-emerald-100/70 dark:bg-emerald-800/60 text-emerald-800 dark:text-emerald-300 font-bold text-base border border-emerald-200 dark:border-emerald-700 shadow-inner">
             {ayat.nomorAyat}
           </div>
@@ -273,8 +332,38 @@ export default function AyatCard({
           )}
         </div>
 
-        {/* Action Button: Lafazkan (Voice Recognition) */}
+        {/* Actions: Bookmark & Lafazkan */}
         <div className="flex items-center gap-2">
+          {/* Tombol Bookmark */}
+          <button
+            onClick={handleBookmarkToggle}
+            className={`p-2.5 rounded-xl text-xs font-medium transition-all duration-200 border flex items-center gap-1.5 ${
+              bookmarked
+                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-400/40 shadow-sm"
+                : "text-emerald-700/70 dark:text-emerald-300/70 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 border-emerald-200 dark:border-emerald-700"
+            }`}
+            title={bookmarked ? "Hapus dari Bookmark" : "Simpan Ayat ke Bookmark"}
+            aria-label="Bookmark Ayat"
+          >
+            <svg
+              className={`w-4 h-4 ${bookmarked ? "fill-amber-500 text-amber-500" : ""}`}
+              fill={bookmarked ? "currentColor" : "none"}
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"
+              />
+            </svg>
+            <span className="hidden sm:inline text-xs font-medium">
+              {bookmarked ? "Tersimpan" : "Bookmark"}
+            </span>
+          </button>
+
+          {/* Action Button: Lafazkan (Voice Recognition) */}
           {isListening ? (
             <button
               onClick={handleStopListening}
@@ -285,7 +374,7 @@ export default function AyatCard({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
               </span>
-              <span>Mendengarkan... (Klik Berhenti)</span>
+              <span>Mendengarkan...</span>
             </button>
           ) : (
             <button
@@ -318,7 +407,7 @@ export default function AyatCard({
           {isHafalanMode && !isUnlocked && (
             <button
               onClick={() => setIsRevealedManually(!isRevealedManually)}
-              className="p-2 rounded-xl text-xs font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 transition-colors border border-emerald-200 dark:border-emerald-700"
+              className="p-2.5 rounded-xl text-xs font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 transition-colors border border-emerald-200 dark:border-emerald-700"
               title={isRevealedManually ? "Sembunyikan teks Arab" : "Intip teks Arab"}
             >
               {isRevealedManually ? (
@@ -447,7 +536,7 @@ export default function AyatCard({
                   Teks Arab Disembunyikan (Mode Hafalan)
                 </h4>
                 <p className="text-xs sm:text-sm text-emerald-800/80 dark:text-slate-300 mt-1">
-                  Uji hafalan Anda dengan menekan tombol <strong className="text-amber-600 dark:text-amber-400">Lafazkan</strong> di bawah. Teks Arab akan terbuka secara otomatis jika bacaan benar.
+                  Uji hafalan Anda dengan menekan tombol <strong className="text-amber-600 dark:text-amber-400">Lafazkan</strong> di atas. Teks Arab akan terbuka secara otomatis jika bacaan benar.
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -497,13 +586,8 @@ export default function AyatCard({
         )}
       </div>
 
-      {/* Terjemahan & Transliterasi Latin */}
-      <div className="pt-6 border-t border-emerald-100 dark:border-emerald-800/50 space-y-2">
-        {ayat.teksLatin && (
-          <p className="text-xs sm:text-sm font-medium text-emerald-700/80 dark:text-emerald-400/80 italic leading-relaxed">
-            {ayat.teksLatin}
-          </p>
-        )}
+      {/* Terjemahan Bahasa Indonesia (Teks Latin Transliterasi Ditiadakan) */}
+      <div className="pt-6 border-t border-emerald-100 dark:border-emerald-800/50">
         <p className="text-emerald-900/90 dark:text-slate-300 leading-relaxed text-sm md:text-base">
           {ayat.teksIndonesia}
         </p>
