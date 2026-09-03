@@ -11,7 +11,11 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: "export",
+  images: {
+    unoptimized: true,
+  },
+  trailingSlash: true,
   turbopack: {},
 };
 

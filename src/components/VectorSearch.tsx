@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { SearchResult } from "@/services/api";
-import { searchVectorAction } from "@/actions/search";
+import { SearchResult, searchVector } from "@/services/api";
 
 export default function VectorSearch() {
   const [query, setQuery] = useState("");
@@ -17,7 +16,7 @@ export default function VectorSearch() {
     setLoading(true);
     setError("");
     try {
-      const data = await searchVectorAction(searchQuery);
+      const data = await searchVector(searchQuery);
       setResults(data);
     } catch (err) {
       setError("Terjadi kesalahan saat mencari. Silakan coba lagi.");

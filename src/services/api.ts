@@ -34,15 +34,30 @@ export interface SuratTafsir extends Surat {
   tafsir: TafsirAyat[];
 }
 
+async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise<Response> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return res;
+      if (res.status === 404) return res; // Don't retry 404
+      console.warn(`Fetch to ${url} returned status ${res.status}. Retrying (${i + 1}/${retries})...`);
+    } catch (err) {
+      console.warn(`Fetch to ${url} failed. Retrying (${i + 1}/${retries})...`, err);
+    }
+    await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
+  }
+  return fetch(url);
+}
+
 export const getSuratList = async (): Promise<Surat[]> => {
-  const res = await fetch(`${BASE_URL}/surat`, { next: { revalidate: 3600 } });
+  const res = await fetchWithRetry(`${BASE_URL}/surat`);
   if (!res.ok) throw new Error('Failed to fetch surat list');
   const data = await res.json();
   return data.data;
 };
 
 export const getSuratDetail = async (nomor: number): Promise<SuratDetail> => {
-  const res = await fetch(`${BASE_URL}/surat/${nomor}`, { next: { revalidate: 3600 } });
+  const res = await fetchWithRetry(`${BASE_URL}/surat/${nomor}`);
   if (!res.ok) {
     const errorText = await res.text();
     console.error(`Failed to fetch surat ${nomor}. Status: ${res.status}, Body: ${errorText}`);
@@ -53,7 +68,7 @@ export const getSuratDetail = async (nomor: number): Promise<SuratDetail> => {
 };
 
 export const getSuratTafsir = async (nomor: number): Promise<SuratTafsir> => {
-  const res = await fetch(`${BASE_URL}/tafsir/${nomor}`, { next: { revalidate: 3600 } });
+  const res = await fetchWithRetry(`${BASE_URL}/tafsir/${nomor}`);
   if (!res.ok) throw new Error('Failed to fetch surat tafsir');
   const data = await res.json();
   return data.data;
