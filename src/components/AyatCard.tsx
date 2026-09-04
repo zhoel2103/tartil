@@ -4,7 +4,12 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { Ayat } from "@/services/api";
 import { useAudio } from "@/context/AudioContext";
 import { useBookmark } from "@/context/BookmarkContext";
-import { compareRecitation } from "@/utils/arabicMatcher";
+import { compareRecitation, type MatchResult, type WordMatchStatus } from "@/utils/arabicMatcher";
+import {
+  getVerseWords,
+  getWordAudioUrl,
+  type QuranFoundationWord,
+} from "@/services/quranFoundation";
 import { playSuccessSound, playErrorSound } from "@/utils/audioFeedback";
 
 export interface AyatCardProps {
@@ -29,11 +34,17 @@ export default function AyatCard({
   onUnlock,
 }: AyatCardProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const wordAudioRef = useRef<HTMLAudioElement>(null);
   const recognitionRef = useRef<any>(null);
 
   const [progress, setProgress] = useState(0);
   const { activeAyatNomor, setActiveAyatNomor, isPlayingGlobal, playNextAyat } = useAudio();
   const { isBookmarked, toggleBookmark, setAsLastRead } = useBookmark();
+
+  // Quran.Foundation API word data & audio
+  const [qfWords, setQfWords] = useState<QuranFoundationWord[] | null>(null);
+  const [matchDetails, setMatchDetails] = useState<MatchResult | null>(null);
+  const [playingWordKey, setPlayingWordKey] = useState<string | null>(null);
 
   // Voice recognition states
   const [isListening, setIsListening] = useState(false);
@@ -50,6 +61,23 @@ export default function AyatCard({
   const isActive = activeAyatNomor === ayat.nomorAyat;
   const isHidden = isHafalanMode && !isUnlocked && !isRevealedManually;
   const bookmarked = isBookmarked(suratNomor, ayat.nomorAyat);
+
+  // Preload Quran.Foundation word-by-word data for higher phonetic accuracy
+  useEffect(() => {
+    let isMounted = true;
+    getVerseWords(suratNomor, ayat.nomorAyat)
+      .then((words) => {
+        if (isMounted && words) {
+          setQfWords(words);
+        }
+      })
+      .catch(() => {
+        // Fallback silently if offline or network error
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [suratNomor, ayat.nomorAyat]);
 
   useEffect(() => {
     if (isActive && isPlayingGlobal) {
@@ -139,8 +167,26 @@ export default function AyatCard({
     }, 2200);
   };
 
+  // Play Quran.Foundation word pronunciation
+  const handlePlayWordAudio = (audioUrl: string | null, key: string) => {
+    const fullUrl = getWordAudioUrl(audioUrl);
+    if (!fullUrl) return;
+
+    if (wordAudioRef.current) {
+      if (playingWordKey === key) {
+        wordAudioRef.current.pause();
+        setPlayingWordKey(null);
+        return;
+      }
+
+      wordAudioRef.current.src = fullUrl;
+      wordAudioRef.current.play().catch(console.error);
+      setPlayingWordKey(key);
+    }
+  };
+
   // Start Voice Recognition (Lafazkan)
-  const handleStartLafaz = useCallback(() => {
+  const handleStartLafaz = useCallback(async () => {
     if (typeof window === "undefined") return;
 
     const SpeechRecognitionClass =
@@ -155,6 +201,19 @@ export default function AyatCard({
       );
       setRecognitionStatus("failed");
       return;
+    }
+
+    // Ensure Quran.Foundation word data is ready
+    let currentQfWords = qfWords;
+    if (!currentQfWords) {
+      try {
+        currentQfWords = await getVerseWords(suratNomor, ayat.nomorAyat);
+        if (currentQfWords) {
+          setQfWords(currentQfWords);
+        }
+      } catch {
+        // Continue with local fallback
+      }
     }
 
     try {
@@ -189,7 +248,12 @@ export default function AyatCard({
 
         for (let i = 0; i < results.length; i++) {
           const spoken = results[i].transcript;
-          const evaluated = compareRecitation(spoken, ayat.teksArab, ayat.teksLatin);
+          const evaluated = compareRecitation(
+            spoken,
+            ayat.teksArab,
+            ayat.teksLatin,
+            currentQfWords
+          );
           if (evaluated.score > highestScore) {
             highestScore = evaluated.score;
             bestResult = { ...evaluated, rawSpoken: spoken };
@@ -198,10 +262,16 @@ export default function AyatCard({
 
         const finalResult =
           bestResult ||
-          compareRecitation(results[0].transcript, ayat.teksArab, ayat.teksLatin);
+          compareRecitation(
+            results[0].transcript,
+            ayat.teksArab,
+            ayat.teksLatin,
+            currentQfWords
+          );
 
         const capturedSpoken = finalResult.rawSpoken || results[0].transcript;
         setTranscript(capturedSpoken);
+        setMatchDetails(finalResult);
 
         if (finalResult.isMatch) {
           setRecognitionStatus("success");
@@ -244,7 +314,7 @@ export default function AyatCard({
       setRecognitionStatus("failed");
       setErrorMessage("Gagal mengaktifkan mikrofon. Pastikan mikrofon Anda berfungsi.");
     }
-  }, [ayat.nomorAyat, ayat.teksArab, ayat.teksLatin, onUnlock]);
+  }, [ayat.nomorAyat, ayat.teksArab, ayat.teksLatin, onUnlock, qfWords, suratNomor]);
 
   const handleStopListening = () => {
     if (recognitionRef.current) {
@@ -469,55 +539,136 @@ export default function AyatCard({
 
       {/* Result feedback when user finished reciting */}
       {recognitionStatus === "success" && (
-        <div className="mb-6 p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between gap-4 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-emerald-500 text-white shrink-0 shadow-sm">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">
-                {feedbackMessage || "Lafaz Benar! MasyaAllah ✨"}
-              </p>
-              {transcript && (
-                <p className="text-xs text-emerald-800/80 dark:text-emerald-300/80 mt-0.5" dir="rtl">
-                  Terdengar: &ldquo;{transcript}&rdquo;
-                </p>
-              )}
+        <div className="mb-6 p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 space-y-3 animate-fade-in">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-emerald-500 text-white shrink-0 shadow-sm">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">
+                    {feedbackMessage || "Lafaz Benar! MasyaAllah ✨"}
+                  </p>
+                  {matchDetails?.usedQuranFoundation && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-600/20 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30">
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" />
+                      </svg>
+                      Quran.Foundation API
+                    </span>
+                  )}
+                </div>
+                {transcript && (
+                  <p className="text-xs text-emerald-800/80 dark:text-emerald-300/80 mt-0.5" dir="rtl">
+                    Terdengar: &ldquo;{transcript}&rdquo;
+                  </p>
+                )}
+              </div>
             </div>
           </div>
+
+          {/* Word-by-word Breakdown */}
+          {matchDetails?.wordMatches && matchDetails.wordMatches.length > 0 && (
+            <div className="pt-2 border-t border-emerald-500/20">
+              <div className="flex items-center justify-between text-[11px] font-medium text-emerald-800/80 dark:text-emerald-300/80 mb-2">
+                <span>Evaluasi Kata ({matchDetails.matchedWordsCount}/{matchDetails.totalWordsCount} tepat):</span>
+                <span className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">Klik kata untuk dengarkan lafaz</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5" dir="rtl">
+                {matchDetails.wordMatches.map((w, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handlePlayWordAudio(w.audioUrl || null, `word-${idx}`)}
+                    className={`group/w px-2.5 py-1 rounded-xl text-xs font-arabic transition-all flex items-center gap-1.5 border shadow-sm ${
+                      w.isMatched
+                        ? "bg-emerald-500/20 text-emerald-950 dark:text-emerald-100 border-emerald-500/40 hover:bg-emerald-500/30"
+                        : "bg-amber-500/20 text-amber-950 dark:text-amber-100 border-amber-500/40 hover:bg-amber-500/30"
+                    } ${playingWordKey === `word-${idx}` ? "ring-2 ring-emerald-500 animate-pulse" : ""}`}
+                    title={w.transliteration ? `${w.transliteration} (Dengarkan)` : "Dengarkan pelafalan resmi"}
+                  >
+                    <span>{w.word}</span>
+                    <svg className="w-3 h-3 opacity-60 group-hover/w:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    </svg>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {recognitionStatus === "failed" && !isListening && (
-        <div className="mb-6 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-rose-500/20 text-rose-600 dark:text-rose-400 shrink-0">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        <div className="mb-6 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/25 space-y-3 animate-fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-rose-500/20 text-rose-600 dark:text-rose-400 shrink-0">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-medium text-rose-900 dark:text-rose-200">
+                    {errorMessage || feedbackMessage || "Lafaz belum tepat. Mari coba lagi!"}
+                  </p>
+                  {matchDetails?.usedQuranFoundation && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-600/15 text-rose-800 dark:text-rose-300 border border-rose-500/25">
+                      Quran.Foundation API
+                    </span>
+                  )}
+                </div>
+                {transcript && (
+                  <p className="text-xs text-rose-700/80 dark:text-rose-300/80 mt-0.5" dir="rtl">
+                    Terdengar: &ldquo;{transcript}&rdquo;
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={handleStartLafaz}
+              className="self-end sm:self-auto px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium transition-colors inline-flex items-center gap-1.5 shadow-sm shrink-0"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-rose-900 dark:text-rose-200">
-                {errorMessage || feedbackMessage || "Lafaz belum tepat. Mari coba lagi!"}
-              </p>
-              {transcript && (
-                <p className="text-xs text-rose-700/80 dark:text-rose-300/80 mt-0.5" dir="rtl">
-                  Terdengar: &ldquo;{transcript}&rdquo;
-                </p>
-              )}
-            </div>
+              <span>Coba Lagi</span>
+            </button>
           </div>
-          <button
-            onClick={handleStartLafaz}
-            className="self-end sm:self-auto px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium transition-colors inline-flex items-center gap-1.5 shadow-sm"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span>Coba Lagi</span>
-          </button>
+
+          {/* Word-by-word Breakdown for correction */}
+          {matchDetails?.wordMatches && matchDetails.wordMatches.length > 0 && (
+            <div className="pt-2 border-t border-rose-500/20">
+              <div className="flex items-center justify-between text-[11px] font-medium text-rose-800/80 dark:text-rose-300/80 mb-2">
+                <span>Periksa pelafalan kata ({matchDetails.matchedWordsCount}/{matchDetails.totalWordsCount} tepat):</span>
+                <span className="text-[10px] text-rose-700/70 dark:text-rose-400/70">Klik kata untuk dengarkan contoh</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5" dir="rtl">
+                {matchDetails.wordMatches.map((w, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handlePlayWordAudio(w.audioUrl || null, `fail-word-${idx}`)}
+                    className={`group/w px-2.5 py-1 rounded-xl text-xs font-arabic transition-all flex items-center gap-1.5 border shadow-sm ${
+                      w.isMatched
+                        ? "bg-emerald-500/20 text-emerald-950 dark:text-emerald-100 border-emerald-500/30"
+                        : "bg-rose-500/20 text-rose-950 dark:text-rose-100 border-rose-500/40 hover:bg-rose-500/30"
+                    } ${playingWordKey === `fail-word-${idx}` ? "ring-2 ring-rose-500 animate-pulse" : ""}`}
+                    title={w.transliteration ? `${w.transliteration} (Dengarkan lafaz yang benar)` : "Dengarkan lafaz yang benar"}
+                  >
+                    <span>{w.word}</span>
+                    <svg className="w-3 h-3 opacity-70 group-hover/w:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    </svg>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -627,6 +778,13 @@ export default function AyatCard({
         >
           <source src={ayat.audio["05"]} type="audio/mpeg" />
         </audio>
+
+        {/* Hidden audio element for word-by-word pronunciation from Quran.Foundation */}
+        <audio
+          ref={wordAudioRef}
+          className="hidden"
+          onEnded={() => setPlayingWordKey(null)}
+        />
       </div>
     </div>
   );

@@ -84,26 +84,148 @@ export function normalizeLatin(text: string): string {
     .trim();
 }
 
+import type { QuranFoundationWord } from "@/services/quranFoundation";
+
+export interface WordMatchStatus {
+  word: string;
+  imlaei: string;
+  transliteration?: string;
+  audioUrl?: string | null;
+  isMatched: boolean;
+}
+
 export interface MatchResult {
   isMatch: boolean;
   score: number; // 0 to 100
   normalizedSpoken: string;
   normalizedTarget: string;
   feedback: string;
+  wordMatches?: WordMatchStatus[];
+  matchedWordsCount?: number;
+  totalWordsCount?: number;
+  usedQuranFoundation?: boolean;
 }
 
 /**
  * Compare user's spoken recitation with the target ayat
+ * Supports Quran.Foundation word-by-word data for higher phonetic accuracy
  */
 export function compareRecitation(
   spokenText: string,
   targetArabic: string,
-  targetLatin?: string
+  targetLatin?: string,
+  quranWords?: QuranFoundationWord[] | null
 ): MatchResult {
   const normSpoken = normalizeArabic(spokenText);
+  const spokenWords = normSpoken.split(" ").filter(Boolean);
+
+  // If Quran.Foundation word data is available, prioritize its verified Imlaei script & word list
+  const actualQuranWords = quranWords
+    ? quranWords.filter((w) => w.char_type_name === "word")
+    : [];
+
+  if (actualQuranWords.length > 0) {
+    const imlaeiSentence = actualQuranWords
+      .map((w) => w.text_imlaei || w.text_uthmani)
+      .join(" ");
+    const normTarget = normalizeArabic(imlaeiSentence);
+
+    // 1. Direct match
+    if (normSpoken === normTarget) {
+      const wordMatches: WordMatchStatus[] = actualQuranWords.map((w) => ({
+        word: w.text_uthmani,
+        imlaei: w.text_imlaei,
+        transliteration: w.transliteration?.text,
+        audioUrl: w.audio_url,
+        isMatched: true,
+      }));
+
+      return {
+        isMatch: true,
+        score: 100,
+        normalizedSpoken: normSpoken,
+        normalizedTarget: normTarget,
+        feedback: "Lafaz Sangat Tepat & Sempurna! MasyaAllah ✨",
+        wordMatches,
+        matchedWordsCount: actualQuranWords.length,
+        totalWordsCount: actualQuranWords.length,
+        usedQuranFoundation: true,
+      };
+    }
+
+    // 2. Word-by-word matching using Quran.Foundation words
+    const wordMatches: WordMatchStatus[] = actualQuranWords.map((w) => {
+      const normWord = normalizeArabic(w.text_imlaei || w.text_uthmani);
+      const isMatched = spokenWords.some((sWord) => {
+        if (sWord === normWord) return true;
+        // Substring or high similarity
+        if (normWord.length >= 3 && (sWord.includes(normWord) || normWord.includes(sWord))) {
+          return true;
+        }
+        return stringSimilarity(sWord, normWord) >= 0.72;
+      });
+
+      return {
+        word: w.text_uthmani,
+        imlaei: w.text_imlaei,
+        transliteration: w.transliteration?.text,
+        audioUrl: w.audio_url,
+        isMatched,
+      };
+    });
+
+    const matchedWordsCount = wordMatches.filter((w) => w.isMatched).length;
+    const totalWordsCount = actualQuranWords.length;
+    const wordRatio = totalWordsCount > 0 ? matchedWordsCount / totalWordsCount : 0;
+
+    // 3. String similarity
+    const fullSim = stringSimilarity(normSpoken, normTarget);
+
+    // Composite score (70% word coverage, 30% sentence similarity)
+    const compositeScore = Math.max(fullSim, wordRatio * 0.75 + fullSim * 0.25);
+    const scorePercentage = Math.round(compositeScore * 100);
+
+    // Also check Latin transliteration fallback if speech engine transcribed to Latin
+    let latinScore = 0;
+    if (targetLatin) {
+      const normSpokenLatin = normalizeLatin(spokenText);
+      const normTargetLatin = normalizeLatin(targetLatin);
+      if (normSpokenLatin && normTargetLatin) {
+        latinScore = stringSimilarity(normSpokenLatin, normTargetLatin);
+      }
+    }
+
+    const finalScore = Math.max(scorePercentage, Math.round(latinScore * 100));
+    const isMatch =
+      finalScore >= 60 ||
+      wordRatio >= 0.6 ||
+      (normTarget.includes(normSpoken) && normSpoken.length >= normTarget.length * 0.55);
+
+    let feedback = "Belum tepat. Coba lafazkan lagi dengan tartil.";
+    if (finalScore >= 85 || wordRatio >= 0.85) {
+      feedback = "Lafaz Sangat Sempurna! MasyaAllah ✨";
+    } else if (finalScore >= 60 || wordRatio >= 0.6) {
+      feedback = `Lafaz Benar (${matchedWordsCount}/${totalWordsCount} kata tepat)! 👍`;
+    } else if (matchedWordsCount > 0) {
+      feedback = `${matchedWordsCount} dari ${totalWordsCount} kata tepat. Sempurnakan pelafalan ayat.`;
+    }
+
+    return {
+      isMatch,
+      score: finalScore,
+      normalizedSpoken: normSpoken || spokenText,
+      normalizedTarget: normTarget,
+      feedback,
+      wordMatches,
+      matchedWordsCount,
+      totalWordsCount,
+      usedQuranFoundation: true,
+    };
+  }
+
+  // Fallback to standard Arabic matching if Quran.Foundation word list is not available
   const normTarget = normalizeArabic(targetArabic);
 
-  // If directly matches or includes
   if (normSpoken === normTarget) {
     return {
       isMatch: true,
@@ -111,19 +233,15 @@ export function compareRecitation(
       normalizedSpoken: normSpoken,
       normalizedTarget: normTarget,
       feedback: "Lafaz Sangat Tepat! MasyaAllah ✨",
+      usedQuranFoundation: false,
     };
   }
 
-  // 1. Check full string similarity
   const fullSim = stringSimilarity(normSpoken, normTarget);
-
-  // 2. Check word-level overlap
   const targetWords = normTarget.split(" ").filter(Boolean);
-  const spokenWords = normSpoken.split(" ").filter(Boolean);
 
   let matchedWords = 0;
   for (const tWord of targetWords) {
-    // Check if word or a close match exists in spoken words
     const found = spokenWords.some((sWord) => {
       if (sWord === tWord) return true;
       return stringSimilarity(sWord, tWord) >= 0.75;
@@ -132,16 +250,9 @@ export function compareRecitation(
   }
 
   const wordOverlapRatio = targetWords.length > 0 ? matchedWords / targetWords.length : 0;
-
-  // Composite score (weighted word coverage + full string similarity)
-  const compositeScore = Math.max(
-    fullSim,
-    wordOverlapRatio * 0.7 + fullSim * 0.3
-  );
-
+  const compositeScore = Math.max(fullSim, wordOverlapRatio * 0.7 + fullSim * 0.3);
   const scorePercentage = Math.round(compositeScore * 100);
 
-  // Also check if spoken in Latin (in case speech recognition recognized Indonesian/English)
   let latinScore = 0;
   if (targetLatin) {
     const normSpokenLatin = normalizeLatin(spokenText);
@@ -152,10 +263,9 @@ export function compareRecitation(
   }
 
   const finalScore = Math.max(scorePercentage, Math.round(latinScore * 100));
-
-  // A score >= 60% is accepted as a pass for speech recognition
-  // (accounting for speech-to-text variations and accents)
-  const isMatch = finalScore >= 60 || normTarget.includes(normSpoken) && normSpoken.length >= normTarget.length * 0.6;
+  const isMatch =
+    finalScore >= 60 ||
+    (normTarget.includes(normSpoken) && normSpoken.length >= normTarget.length * 0.6);
 
   let feedback = "Belum tepat. Coba lafazkan lagi dengan tartil.";
   if (finalScore >= 85) {
@@ -172,5 +282,9 @@ export function compareRecitation(
     normalizedSpoken: normSpoken || spokenText,
     normalizedTarget: normTarget,
     feedback,
+    matchedWordsCount: matchedWords,
+    totalWordsCount: targetWords.length,
+    usedQuranFoundation: false,
   };
 }
+
