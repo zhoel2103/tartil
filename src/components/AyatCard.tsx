@@ -8,7 +8,11 @@ import { compareRecitation, type MatchResult, type WordMatchStatus } from "@/uti
 import {
   getVerseWords,
   getWordAudioUrl,
+  getVerseTiming,
+  getActiveWordIndex,
+  getWordSeekTime,
   type QuranFoundationWord,
+  type VerseTiming,
 } from "@/services/quranFoundation";
 import { playSuccessSound, playErrorSound } from "@/utils/audioFeedback";
 
@@ -43,6 +47,8 @@ export default function AyatCard({
 
   // Quran.Foundation API word data & audio
   const [qfWords, setQfWords] = useState<QuranFoundationWord[] | null>(null);
+  const [verseTiming, setVerseTiming] = useState<VerseTiming | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
   const [matchDetails, setMatchDetails] = useState<MatchResult | null>(null);
   const [playingWordKey, setPlayingWordKey] = useState<string | null>(null);
 
@@ -62,9 +68,11 @@ export default function AyatCard({
   const isHidden = isHafalanMode && !isUnlocked && !isRevealedManually;
   const bookmarked = isBookmarked(suratNomor, ayat.nomorAyat);
 
-  // Preload Quran.Foundation word-by-word data for higher phonetic accuracy
+  // Preload Quran.Foundation word-by-word data & audio sync timing
   useEffect(() => {
     let isMounted = true;
+
+    // 1. Preload word data for phonetic accuracy
     getVerseWords(suratNomor, ayat.nomorAyat)
       .then((words) => {
         if (isMounted && words) {
@@ -74,6 +82,18 @@ export default function AyatCard({
       .catch(() => {
         // Fallback silently if offline or network error
       });
+
+    // 2. Preload millisecond-accurate timing segments for word synchronization
+    getVerseTiming(suratNomor, ayat.nomorAyat)
+      .then((timing) => {
+        if (isMounted && timing) {
+          setVerseTiming(timing);
+        }
+      })
+      .catch(() => {
+        // Fallback silently if offline or network error
+      });
+
     return () => {
       isMounted = false;
     };
@@ -109,15 +129,17 @@ export default function AyatCard({
 
   const handleTimeUpdate = () => {
     if (audioRef.current) {
-      const { currentTime, duration } = audioRef.current;
+      const { currentTime: cur, duration } = audioRef.current;
+      setCurrentTime(cur);
       if (duration) {
-        setProgress(currentTime / duration);
+        setProgress(cur / duration);
       }
     }
   };
 
   const handleEnded = () => {
     setProgress(0);
+    setCurrentTime(0);
     if (isActive && isPlayingGlobal) {
       playNextAyat();
     }
@@ -328,8 +350,26 @@ export default function AyatCard({
   };
 
   const words = ayat.teksArab.split(" ");
-  const activeWordIndex = Math.min(Math.floor(progress * words.length), words.length - 1);
   const isPlaying = progress > 0 && progress < 1;
+
+  // Accurately synchronized word index using Quran.Foundation segment data
+  const activeWordIndex = isPlaying
+    ? getActiveWordIndex(currentTime, verseTiming, words.length, progress)
+    : -1;
+
+  // Jump to specific word in recitation when clicked
+  const handleWordClick = (wordIdx: number) => {
+    if (!audioRef.current) return;
+    const seekTime = getWordSeekTime(wordIdx, verseTiming);
+    if (seekTime !== null) {
+      audioRef.current.currentTime = seekTime;
+      setCurrentTime(seekTime);
+      if (audioRef.current.paused) {
+        handlePlay();
+        audioRef.current.play().catch(console.error);
+      }
+    }
+  };
 
   return (
     <div
@@ -718,11 +758,13 @@ export default function AyatCard({
               {words.map((word, index) => (
                 <span
                   key={index}
-                  className={`transition-colors duration-200 ${
+                  onClick={() => handleWordClick(index)}
+                  className={`transition-all duration-200 cursor-pointer rounded-lg px-1 inline-block ${
                     isPlaying && index === activeWordIndex
-                      ? "text-amber-600 dark:text-amber-400 font-semibold"
-                      : ""
+                      ? "text-amber-600 dark:text-amber-400 font-semibold bg-amber-500/15 dark:bg-amber-400/20 scale-105 shadow-sm"
+                      : "hover:text-amber-600/80 dark:hover:text-amber-400/80"
                   }`}
+                  title={verseTiming?.segments ? "Klik untuk memutar dari kata ini" : undefined}
                 >
                   {word}{" "}
                 </span>
